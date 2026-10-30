@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uki-addon-manager"
+version = "0.3.0"
+description = "Choose which DeviceTree overlay UKI addons are installed"
+requires-python = ">=3.11"
+dependencies = ["PyYAML"]
+
+[project.scripts]
+uki-addon-manager = "uki_addon_manager.cli:main"

@@ -1,0 +1,7 @@
+# Example addon definition: one file per addon, in /etc/uki-addon-manager/conf.d/.
+name: "IMX219 Camera Slot 0 on Media Carrier"
+desc: "Example description"
+filename: "imx219-csi0-mc.addon.efi"
+provides: ["imx219_cs0"]
+depends_on: ["media_carrier"]
+compatibility: ["arduino,imola"]

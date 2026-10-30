@@ -1,0 +1,6 @@
+# Example addon definition: one file per addon, in /etc/uki-addon-manager/conf.d/.
+name: "Media Carrier Board"
+desc: "Example description"
+filename: "media-carrier.addon.efi"
+provides: ["media_carrier"]
+compatibility: ["arduino,imola"]

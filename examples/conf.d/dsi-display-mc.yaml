@@ -1,0 +1,7 @@
+# Example addon definition: one file per addon, in /etc/uki-addon-manager/conf.d/.
+name: "DSI Display on Media Carrier"
+desc: "Example description"
+filename: "dsi-display-mc.addon.efi"
+provides: ["dsi_display"]
+depends_on: ["media_carrier"]
+compatibility: ["arduino,imola"]
