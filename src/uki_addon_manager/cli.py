@@ -87,17 +87,17 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
     """The menu's list, drawn with curses. Returns the ticked file names, or None for Esc.
 
     chosen: the file names the user ticked. Dependencies are ticked automatically, and shown as [+].
-    Typing filters the list on ID and name. Addons that are filtered out keep their tick.
+    Typing filters the list on ID, name and description. Addons that are filtered out keep their tick.
     """
 
-    # TODO: searching descriptions instead of just names and IDs, add info field about selected addon, mark incompatible addons(?) <- kernel version specific folders may invalidate this.
+    # TODO: add info field about selected addon, mark incompatible addons(?) <- kernel version specific folders may invalidate this.
 
     curses.set_escdelay(25)  # otherwise Esc takes a second, while curses waits for an arrow key's code
     files = {a.filename for a in shown}
     id_width = max(len(a.provides[0]) for a in shown)
     search, pos, top = "", 0, 0
     while True:
-        found = [a for a in shown if search.lower() in f"{a.provides[0]} {a.name}".lower()]
+        found = [a for a in shown if search.lower() in f"{a.provides[0]} {a.name} {a.desc}".lower()]
         needed = {a.filename for a in resolve(chosen, shown, files, board)[0]}  # the same tree that saving builds
         height, width = screen.getmaxyx()
         rows = max(height - 6, 1)
