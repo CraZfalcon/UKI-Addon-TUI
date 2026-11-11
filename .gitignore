@@ -2,4 +2,4 @@
 /tests
 /build
 .venv/
-
+*/*/__pycache__/
