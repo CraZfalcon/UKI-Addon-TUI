@@ -88,9 +88,10 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
 
     chosen: the file names the user ticked. Dependencies are ticked automatically, and shown as [+].
     Typing filters the list on ID, name and description. Addons that are filtered out keep their tick.
+    Under the list, there's two lines showing the dependencies and a short description pulled from the yaml file.
     """
 
-    # TODO: add info field about selected addon, mark incompatible addons(?) <- kernel version specific folders may invalidate this.
+    # TODO: mark incompatible addons(?) <- kernel version specific folders may invalidate this.
 
     curses.set_escdelay(25)  # otherwise Esc takes a second, while curses waits for an arrow key's code
     files = {a.filename for a in shown}
@@ -100,7 +101,7 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
         found = [a for a in shown if search.lower() in f"{a.provides[0]} {a.name} {a.desc}".lower()]
         needed = {a.filename for a in resolve(chosen, shown, files, board)[0]}  # the same tree that saving builds
         height, width = screen.getmaxyx()
-        rows = max(height - 6, 1)
+        rows = max(height - 8, 1)
         pos = min(pos, max(len(found) - 1, 0))
         top = min(max(top, pos - rows + 1), pos)  # scroll so the highlighted line stays on screen
 
@@ -112,9 +113,12 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
                 screen.addnstr(3, 1, "No addon matches the search.", width - 2)
             for row, addon in enumerate(found[top:top + rows]):
                 mark = "[*]" if addon.filename in chosen else "[+]" if addon.filename in needed else "[ ]"
-                line = f"{mark} {addon.provides[0]:<{id_width}}  {addon.name}"
-                line = line if len(line) <= width - 2 else line[:width - 5] + "..."  # never past the edge
+                line = cut(f"{mark} {addon.provides[0]:<{id_width}}  {addon.name}", width - 2)
                 screen.addnstr(3 + row, 1, line, width - 2, curses.A_REVERSE if top + row == pos else 0)
+            if found:  # what the highlighted addon needs, and its description
+                needs = ", ".join(found[pos].depends_on) or "nothing"
+                screen.addnstr(height - 4, 1, cut(f"Needs: {needs}", width - 2), width - 2)
+                screen.addnstr(height - 3, 1, cut(found[pos].desc, width - 2), width - 2)
             screen.addnstr(height - 2, 1, "[+] = needed by something you ticked", width - 2)
             screen.addnstr(height - 1, 1, "Type to search, Space ticks, Enter saves, Esc cancels", width - 2)
             screen.move(1, 9 + len(search))  # the cursor shows where typing goes
@@ -138,6 +142,11 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
             search, pos = search[:-1], 0
         elif isinstance(key, str) and key.isprintable():
             search, pos = search + key, 0
+
+
+def cut(text: str, room: int) -> str:
+    """text, cut off with "..." if it's longer than room. curses would otherwise draw it past the edge."""
+    return text if len(text) <= room else text[:room - 3] + "..."
 
 
 def whiptail(*args: str) -> subprocess.CompletedProcess:
