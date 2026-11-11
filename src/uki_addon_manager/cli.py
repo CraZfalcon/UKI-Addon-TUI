@@ -1,5 +1,5 @@
 """
-uki-addon-manager: a whiptail menu, and the command line underneath it.
+uki-addon-manager: a menu (curses, with a whiptail box after it), and the command line underneath it.
 
 Without a command it opens the menu. Commands: list, enable, disable.
 """
@@ -9,8 +9,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import curses
+except ImportError:  # Windows Python has no curses. Only the menu needs it.
+    curses = None
+
 from .addons import (
-    AddonError, Paths, available_files, load_addons, providers_for, read_board, read_selection, resolve, write_selection,
+    Addon, AddonError, Paths, available_files, load_addons, providers_for, read_board, read_selection, resolve,
+    write_selection,
 )
 
 # Without a version and image, kernel-install uses the running kernel and /usr/lib/modules/<version>/vmlinuz.
@@ -55,34 +61,83 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def menu(paths: Paths) -> None:
-    """A whiptail checklist of the addons for this board. Saving works like enable/disable."""
+    """A checklist of the addons for this board. Saving works like enable/disable."""
     board = read_board(paths.compatible_file)
     shown = [a for a in load_addons(paths.conf_dir) if a.fits(board)]
     if not shown:
         raise AddonError("no addons for this board")
     selected = read_selection(paths.selection_file)
 
-    items = []
-    for addon in shown:
-        needs = f" (needs {', '.join(addon.depends_on)})" if addon.depends_on else ""
-        items += [addon.provides[0], addon.name + needs, "ON" if addon.filename in selected else "OFF"]
-    rows = min(len(shown), 12)
-    answer = whiptail(
-        "--separate-output", "--checklist",
-        "Select the overlays to load at boot.\nSpace ticks a box, Tab moves to the buttons.",
-        str(rows + 9), "78", str(rows), *items,
-    )
-    if answer.returncode != 0:  # Cancel or Esc: change nothing
+    try:
+        ticked = curses.wrapper(checklist, shown, selected, board)
+    except KeyboardInterrupt:  # Ctrl+C: change nothing
+        return
+    if ticked is None:  # Esc: change nothing
         return
 
-    # The menu shows IDs; the selection file holds file names.
-    ticked = answer.stderr.split()
-    summary = save(paths, [a.filename for a in shown if a.provides[0] in ticked])
+    summary = save(paths, ticked)
     question = "\n\nPut this on the boot partition now? This runs kernel-install, which rebuilds the UKI."
     if whiptail("--yes-button", "Apply", "--no-button", "Later", "--yesno", summary + question, "16", "78").returncode:
         print(LATER)
     else:
         apply()
+
+
+def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | None) -> list[str] | None:
+    """The menu's list, drawn with curses. Returns the ticked file names, or None for Esc.
+
+    chosen: the file names the user ticked. Dependencies are ticked automatically, and shown as [+].
+    Typing filters the list on ID and name. Addons that are filtered out keep their tick.
+    """
+
+    # TODO: searching descriptions instead of just names and IDs, add info field about selected addon, mark incompatible addons(?) <- kernel version specific folders may invalidate this.
+
+    curses.set_escdelay(25)  # otherwise Esc takes a second, while curses waits for an arrow key's code
+    files = {a.filename for a in shown}
+    id_width = max(len(a.provides[0]) for a in shown)
+    search, pos, top = "", 0, 0
+    while True:
+        found = [a for a in shown if search.lower() in f"{a.provides[0]} {a.name}".lower()]
+        needed = {a.filename for a in resolve(chosen, shown, files, board)[0]}  # the same tree that saving builds
+        height, width = screen.getmaxyx()
+        rows = max(height - 6, 1)
+        pos = min(pos, max(len(found) - 1, 0))
+        top = min(max(top, pos - rows + 1), pos)  # scroll so the highlighted line stays on screen
+
+        screen.erase()
+        try:  # a very small terminal has no room for some lines; skip them
+            screen.addnstr(0, 1, "Select the overlays to load at boot.", width - 2)
+            screen.addnstr(1, 1, f"Search: {search}", width - 2)
+            if not found:
+                screen.addnstr(3, 1, "No addon matches the search.", width - 2)
+            for row, addon in enumerate(found[top:top + rows]):
+                mark = "[*]" if addon.filename in chosen else "[+]" if addon.filename in needed else "[ ]"
+                line = f"{mark} {addon.provides[0]:<{id_width}}  {addon.name}"
+                line = line if len(line) <= width - 2 else line[:width - 5] + "..."  # never past the edge
+                screen.addnstr(3 + row, 1, line, width - 2, curses.A_REVERSE if top + row == pos else 0)
+            screen.addnstr(height - 2, 1, "[+] = needed by something you ticked", width - 2)
+            screen.addnstr(height - 1, 1, "Type to search, Space ticks, Enter saves, Esc cancels", width - 2)
+            screen.move(1, 9 + len(search))  # the cursor shows where typing goes
+        except curses.error:
+            pass
+
+        key = screen.get_wch()
+        if key == "\x1b":
+            return None
+        if key in ("\n", "\r", curses.KEY_ENTER):
+            return [a.filename for a in shown if a.filename in chosen]
+        if key == curses.KEY_UP:
+            pos = max(pos - 1, 0)
+        elif key == curses.KEY_DOWN:
+            pos += 1
+        elif key == " " and found:
+            # Space on [+] makes it your own tick [*]. Unticking [*] leaves [+] while something else needs it.
+            name = found[pos].filename
+            chosen = [f for f in chosen if f != name] if name in chosen else [*chosen, name]
+        elif key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+            search, pos = search[:-1], 0
+        elif isinstance(key, str) and key.isprintable():
+            search, pos = search + key, 0
 
 
 def whiptail(*args: str) -> subprocess.CompletedProcess:
