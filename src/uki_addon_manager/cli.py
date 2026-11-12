@@ -1,12 +1,15 @@
 """
-uki-addon-manager: a menu (curses, with a whiptail box after it), and the command line underneath it.
+uki-addon-manager: a curses menu, and the command line underneath it.
 
 Without a command it opens the menu. Commands: list, enable, disable.
 """
 
+#TODO: Add / change comments in the code, especially the curses menu. It's a bit hard to follow.
+
 import argparse
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 try:
@@ -74,13 +77,19 @@ def menu(paths: Paths) -> None:
         return
     if ticked is None:  # Esc: change nothing
         return
+    if set(ticked) == set(selected):  # Enter without changing any tick: nothing to save
+        print("Nothing changed.")
+        return
 
     summary = save(paths, ticked)
-    question = "\n\nPut this on the boot partition now? This runs kernel-install, which rebuilds the UKI."
-    if whiptail("--yes-button", "Apply", "--no-button", "Later", "--yesno", summary + question, "16", "78").returncode:
-        print(LATER)
-    else:
+    try:
+        now = curses.wrapper(ask, summary)
+    except KeyboardInterrupt:  # Ctrl+C: the same as N, the selection is already saved
+        now = False
+    if now:
         apply()
+    else:
+        print(LATER)
 
 
 def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | None) -> list[str] | None:
@@ -90,8 +99,6 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
     Typing filters the list on ID, name and description. Addons that are filtered out keep their tick.
     Under the list, there's two lines showing the dependencies and a short description pulled from the yaml file.
     """
-
-    # TODO: mark incompatible addons(?) <- kernel version specific folders may invalidate this.
 
     curses.set_escdelay(25)  # otherwise Esc takes a second, while curses waits for an arrow key's code
     files = {a.filename for a in shown}
@@ -126,20 +133,21 @@ def checklist(screen, shown: list[Addon], chosen: list[str], board: list[str] | 
             pass
 
         key = screen.get_wch()
-        if key == "\x1b":
+        if key == "\x1b" and not search:
             return None
         if key in ("\n", "\r", curses.KEY_ENTER):
             return [a.filename for a in shown if a.filename in chosen]
-        if key == curses.KEY_UP:
-            pos = max(pos - 1, 0)
-        elif key == curses.KEY_DOWN:
-            pos += 1
+        if key == curses.KEY_UP and found:
+            pos = (pos - 1) % len(found)
+        elif key == curses.KEY_DOWN and found:
+            pos = (pos + 1) % len(found)
         elif key == " " and found:
-            # Space on [+] makes it your own tick [*]. Unticking [*] leaves [+] while something else needs it.
             name = found[pos].filename
             chosen = [f for f in chosen if f != name] if name in chosen else [*chosen, name]
         elif key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
             search, pos = search[:-1], 0
+        elif key == "\x1b":  # Esc empties the search first. The next Esc cancels.
+            search, pos = "", 0
         elif isinstance(key, str) and key.isprintable():
             search, pos = search + key, 0
 
@@ -149,12 +157,27 @@ def cut(text: str, room: int) -> str:
     return text if len(text) <= room else text[:room - 3] + "..."
 
 
-def whiptail(*args: str) -> subprocess.CompletedProcess:
-    """Run whiptail. It draws on the terminal and writes its answer to stderr."""
-    try:
-        return subprocess.run(["whiptail", "--title", "uki-addon-manager", *args], stderr=subprocess.PIPE, text=True)
-    except FileNotFoundError:
-        raise AddonError("whiptail isn't installed (sudo apt install whiptail)") from None
+def ask(screen, summary: str) -> bool:
+    """After saving: show what was saved, and ask whether to put it on the boot partition now. True for Y."""
+    text = summary + "\n\nInstall overlays now? This runs kernel-install, which rebuilds the UKI."
+    while True:
+        width = screen.getmaxyx()[1]
+        rows = []
+        for line in text.splitlines():
+            rows += textwrap.wrap(line, width - 2) or [""]  # wrap long lines; wrap() would drop the empty ones
+
+        screen.erase()
+        try:  # a very small terminal has no room for some lines; skip them
+            for y, row in enumerate([*rows, "", "Y = apply now, N = later"]):
+                screen.addnstr(y, 1, row, width - 2)
+        except curses.error:
+            pass
+
+        key = screen.get_wch()
+        if key in ("y", "Y"):
+            return True
+        if key in ("n", "N", "\x1b"):  # Esc counts as N
+            return False
 
 
 def apply() -> None:
@@ -172,9 +195,11 @@ def apply() -> None:
 def show_list(paths: Paths) -> None:
     board = read_board(paths.compatible_file)
     selected = read_selection(paths.selection_file)
-    for addon in load_addons(paths.conf_dir):
+    addons = load_addons(paths.conf_dir)
+    needed = {a.filename for a in resolve(selected, addons, {a.filename for a in addons}, board)[0]}  # as in the menu
+    for addon in addons:
         if addon.fits(board):
-            mark = "[x]" if addon.filename in selected else "[ ]"
+            mark = "[*]" if addon.filename in selected else "[+]" if addon.filename in needed else "[ ]"
             needs = f"  (needs {', '.join(addon.depends_on)})" if addon.depends_on else ""
             print(f"{mark} {', '.join(addon.provides):<15} {addon.name}{needs}")
 
